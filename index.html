@@ -40,12 +40,12 @@
     .bid { color: #28a745; font-weight: bold; }
     .ask { color: #dc3545; font-weight: bold; }
     .spread { color: #6c757d; }
-    .error { color: #dc3545; text-align: center; padding: 10px; }
+    .error { color: #dc3545; text-align: center; padding: 10; }
   </style>
 </head>
 <body>
   <h1>🔍 ParaDex – Best Bid / Ask</h1>
-  <div class="status" id="status">Chargement des marchés...</div>
+  <div class="status" id="status">Connexion au WebSocket...</div>
   <table id="orderbookTable">
     <thead>
       <tr>
@@ -61,105 +61,66 @@
   <script>
     const statusEl = document.getElementById('status');
     const tableBody = document.getElementById('tableBody');
+    const marketsData = {};
 
-    // Stocke les données par marché
-    let marketsData = {};
+    // Connexion WebSocket
+    const ws = new WebSocket('wss://ws.api.prod.paradex.trade/v1/');
 
-    // Étape 1 : Récupérer la liste des marchés via ton serveur local
-    async function fetchMarkets() {
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      statusEl.textContent = 'Abonné à tous les marchés...';
+      ws.send(JSON.stringify({
+        op: 'subscribe',
+        channel: 'order_book',
+        market_symbol: 'ALL'
+      }));
+    };
+
+    ws.onmessage = (event) => {
       try {
-        const res = await fetch('http://localhost:3000/markets'); // ✅ Changé ici
-        const markets = await res.json();
-        const activeMarkets = markets
-          .filter(m => m.status === 'active')
-          .map(m => m.symbol);
+        const data = JSON.parse(event.data);
+        if (data.channel === 'order_book' && data.market_symbol) {
+          const symbol = data.market_symbol;
+          const bids = data.bids || [];
+          const asks = data.asks || [];
 
-        // Initialiser le tableau
-        renderTable(activeMarkets);
-        statusEl.textContent = `Connecté à ${activeMarkets.length} marchés...`;
-
-        // Étape 2 : Se connecter au WebSocket
-        connectWebSocket(activeMarkets);
-      } catch (err) {
-        statusEl.textContent = '❌ Erreur chargement marchés';
-        console.error(err);
-      }
-    }
-
-    // Étape 2 : Créer le tableau vide
-    function renderTable(markets) {
-      tableBody.innerHTML = '';
-      markets.forEach(symbol => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${symbol}</td>
-          <td class="bid" id="bid-${symbol}">—</td>
-          <td class="ask" id="ask-${symbol}">—</td>
-          <td class="spread" id="spread-${symbol}">—</td>
-        `;
-        tableBody.appendChild(row);
-        marketsData[symbol] = { bid: null, ask: null };
-      });
-    }
-
-    // Étape 3 : Connexion WebSocket
-    function connectWebSocket(markets) {
-      const ws = new WebSocket('wss://ws.api.prod.paradex.trade/v1/');
-
-      ws.onopen = () => {
-        console.log('WebSocket connected');
-        // S'abonner à tous les marchés
-        ws.send(JSON.stringify({
-          op: 'subscribe',
-          channel: 'order_book',
-          market_symbol: 'ALL'
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.channel === 'order_book' && data.market_symbol) {
-            const symbol = data.market_symbol;
-            const bids = data.bids || [];
-            const asks = data.asks || [];
-
-            if (bids.length > 0 && asks.length > 0) {
-              const bestBid = parseFloat(bids[0][0]);
-              const bestAsk = parseFloat(asks[0][0]);
-              const spread = bestAsk - bestBid;
-
-              // Mettre à jour les données
-              marketsData[symbol] = { bid: bestBid, ask: bestAsk };
-
-              // Mettre à jour le DOM
-              const bidEl = document.getElementById(`bid-${symbol}`);
-              const askEl = document.getElementById(`ask-${symbol}`);
-              const spreadEl = document.getElementById(`spread-${symbol}`);
-
-              if (bidEl) bidEl.textContent = bestBid.toFixed(4);
-              if (askEl) askEl.textContent = bestAsk.toFixed(4);
-              if (spreadEl) spreadEl.textContent = spread.toFixed(4);
-            }
+          // Créer la ligne si elle n'existe pas
+          if (!document.getElementById(`row-${symbol}`)) {
+            const row = document.createElement('tr');
+            row.id = `row-${symbol}`;
+            row.innerHTML = `
+              <td>${symbol}</td>
+              <td class="bid" id="bid-${symbol}">—</td>
+              <td class="ask" id="ask-${symbol}">—</td>
+              <td class="spread" id="spread-${symbol}">—</td>
+            `;
+            tableBody.appendChild(row);
           }
-        } catch (err) {
-          console.error('Parse error:', err);
+
+          if (bids.length > 0 && asks.length > 0) {
+            const bestBid = parseFloat(bids[0][0]);
+            const bestAsk = parseFloat(asks[0][0]);
+            const spread = bestAsk - bestBid;
+
+            document.getElementById(`bid-${symbol}`).textContent = bestBid.toFixed(4);
+            document.getElementById(`ask-${symbol}`).textContent = bestAsk.toFixed(4);
+            document.getElementById(`spread-${symbol}`).textContent = spread.toFixed(4);
+          }
         }
-      };
+      } catch (err) {
+        console.error('Parse error:', err);
+      }
+    };
 
-      ws.onerror = (err) => {
-        statusEl.textContent = '❌ Erreur WebSocket';
-        console.error('WebSocket error:', err);
-      };
+    ws.onerror = (err) => {
+      statusEl.textContent = '❌ Erreur WebSocket';
+      console.error('WebSocket error:', err);
+    };
 
-      ws.onclose = () => {
-        statusEl.textContent = '⚠️ Reconnexion...';
-        setTimeout(() => connectWebSocket(Object.keys(marketsData)), 3000);
-      };
-    }
-
-    // Démarrage
-    fetchMarkets();
+    ws.onclose = () => {
+      statusEl.textContent = '⚠️ Reconnexion...';
+      setTimeout(() => location.reload(), 3000);
+    };
   </script>
 </body>
 </html>
